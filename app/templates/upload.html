@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Upload</title>
+    <style>
+        /* Estilos básicos */
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f4f4f9;
+            margin: 0;
+        }
+
+        .container {
+            text-align: center;
+            background: #fff;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            width: 300px;
+        }
+
+        h1 {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        input[type="file"] {
+            margin-bottom: 15px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            color: #fff;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+
+        #download-section {
+            display: none;
+            margin-top: 20px;
+        }
+
+        /* Estilos de carregamento */
+        #loading {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Upload Your Video</h1>
+        <form id="upload-form" enctype="multipart/form-data">
+            <input type="file" name="video" accept="video/*" required>
+            <button type="submit">Upload</button>
+        </form>
+
+        <div id="loading">
+            <p>Processing your video...</p>
+            <div class="spinner"></div>
+        </div>
+
+        <div id="download-section">
+            <h2>Processed Video</h2>
+            <video id="processed-video" controls width="100%"></video>
+            <br>
+            <a id="download-link" href="#" download>Download Processed Video</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById("upload-form").onsubmit = async function (event) {
+            event.preventDefault();
+            const formData = new FormData();
+            const videoFile = document.querySelector('input[type="file"]').files[0];
+            formData.append("video", videoFile);
+
+            // Mostrar animação de carregamento e desabilitar o botão de upload
+            document.getElementById("loading").style.display = "block";
+            document.querySelector("button").disabled = true;
+
+            // Enviar o vídeo via AJAX
+            const response = await fetch("{{ url_for('routes.upload_video') }}", {
+                method: "POST",
+                body: formData
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const processedVideoUrl = data.processed_video_url;
+
+                // Ocultar o carregamento, exibir vídeo processado e link de download
+                document.getElementById("loading").style.display = "none";
+                document.getElementById("processed-video").src = processedVideoUrl;
+                document.getElementById("download-link").href = processedVideoUrl;
+                document.getElementById("download-section").style.display = "block";
+                document.querySelector("button").disabled = false;
+            } else {
+                alert("Erro no processamento do vídeo");
+                document.getElementById("loading").style.display = "none";
+                document.querySelector("button").disabled = false;
+            }
+        };
+    </script>
+</body>
+
+</html>
