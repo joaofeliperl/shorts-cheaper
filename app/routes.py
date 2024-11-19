@@ -5,37 +5,86 @@ import numpy as np
 import whisper
 import os
 
-# Inicialização do Blueprint
 routes = Blueprint('routes', __name__)
 
-# Pastas para upload e processamento de vídeos
 UPLOAD_FOLDER = 'uploads/'
 PROCESSED_FOLDER = 'processed/'
 
-# Criação das pastas, se não existirem
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
-# Carregar o modelo Whisper para reconhecimento de fala
 model = whisper.load_model("base")
 
-# Função para criar imagem de texto usando Pillow e converter para NumPy
-def create_text_image(text, size, color='white'):
-    img = Image.new('RGB', size, color=(0, 0, 0))  # Fundo preto
+def create_text_image(text, video_size, color='white', stroke_color='black', font_path="/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", font_size=30):
+    """
+    Cria uma imagem de texto com bordas.
+    """
+    max_width = video_size[0]
+    max_height = 100  # Altura da área de texto
+    img = Image.new('RGBA', (max_width, max_height), (0, 0, 0, 0))  # Fundo transparente
     draw = ImageDraw.Draw(img)
-    font = ImageFont.load_default()  # Fonte padrão do Pillow
-    
-    # Centraliza o texto usando textbbox
-    text_bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = text_bbox[2] - text_bbox[0]
-    text_height = text_bbox[3] - text_bbox[1]
-    text_position = ((size[0] - text_width) // 2, (size[1] - text_height) // 2)
+    font = ImageFont.truetype(font_path, font_size)
 
-    # Desenha o texto centralizado
-    draw.text(text_position, text, fill=color, font=font)
-    return np.array(img)  # Converte a imagem Pillow para um array NumPy
+    # Divide o texto em linhas
+    words = text.split(' ')
+    current_line = []
+    lines = []
 
-# Rota para upload e processamento do vídeo
+    for word in words:
+        test_line = ' '.join(current_line + [word])
+        text_bbox = draw.textbbox((0, 0), test_line, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        if text_width <= max_width - 20:  # Margem lateral
+            current_line.append(word)
+        else:
+            lines.append(' '.join(current_line))
+            current_line = [word]
+    if current_line:
+        lines.append(' '.join(current_line))
+
+    # Centraliza as linhas verticalmente dentro da área de texto
+    line_height = font_size + 5  # Espaçamento entre linhas
+    total_height = len(lines) * line_height
+    y_offset = (max_height - total_height) // 2
+
+    for line in lines:
+        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        x_position = (max_width - text_width) // 2
+        
+        # Adiciona a borda ao texto
+        draw.text((x_position, y_offset), line, font=font, fill=stroke_color, stroke_width=2, stroke_fill=stroke_color)
+        
+        # Adiciona o texto principal
+        draw.text((x_position, y_offset), line, font=font, fill=color, stroke_width=0)
+        y_offset += line_height
+
+    return np.array(img)
+
+def split_text_into_phrases(text, max_length=50):
+    """
+    Divide um texto em frases menores com base no comprimento máximo.
+    """
+    words = text.split(' ')
+    phrases = []
+    current_phrase = []
+
+    for word in words:
+        if len(' '.join(current_phrase + [word])) <= max_length:
+            current_phrase.append(word)
+        else:
+            phrases.append(' '.join(current_phrase))
+            current_phrase = [word]
+
+    if current_phrase:
+        phrases.append(' '.join(current_phrase))
+
+    return phrases
+
+@routes.route('/')
+def index():
+    return redirect(url_for('routes.upload_video'))
+
 @routes.route('/upload', methods=['GET', 'POST'])
 def upload_video():
     if request.method == 'POST':
@@ -45,21 +94,37 @@ def upload_video():
             file.save(filepath)
 
             try:
-                # Processamento do vídeo
                 processed_filename = f"processed_{file.filename}"
                 processed_path = os.path.join(PROCESSED_FOLDER, processed_filename)
 
                 clip = VideoFileClip(filepath)
-                transcription = model.transcribe(filepath)["text"]
+                transcription_segments = model.transcribe(filepath)["segments"]
 
-                # Criação da imagem de texto com Pillow e conversão para NumPy
-                text_image = create_text_image(transcription, (clip.w, 100))
-                text_clip = ImageClip(text_image).set_duration(clip.duration).set_position('bottom')
+                subtitle_clips = []
 
-                # Combina o vídeo com a imagem de texto
-                video_with_subtitles = CompositeVideoClip([clip, text_clip])
+                for segment in transcription_segments:
+                    text = segment["text"]
+                    start_time = segment["start"]
+                    end_time = segment["end"]
 
-                # Salva o vídeo processado
+                    # Divide o texto do segmento em frases menores
+                    phrases = split_text_into_phrases(text, max_length=50)
+
+                    # Calcula a duração de cada frase proporcionalmente ao tempo do segmento
+                    segment_duration = end_time - start_time
+                    phrase_duration = segment_duration / len(phrases)
+
+                    for i, phrase in enumerate(phrases):
+                        phrase_start = start_time + i * phrase_duration
+                        phrase_end = phrase_start + phrase_duration
+
+                        # Cria imagem para cada frase
+                        text_image = create_text_image(phrase, (clip.w, 100))
+                        text_clip = ImageClip(text_image).set_start(phrase_start).set_end(phrase_end).set_position(('center', clip.h - 200))
+                        subtitle_clips.append(text_clip)
+
+                # Combina o vídeo com as legendas
+                video_with_subtitles = CompositeVideoClip([clip, *subtitle_clips])
                 video_with_subtitles.write_videofile(processed_path, codec="libx264")
 
                 processed_video_url = url_for('routes.download_video', filename=processed_filename, _external=True)
@@ -71,7 +136,6 @@ def upload_video():
 
     return render_template('upload.html')
 
-# Rota para download do vídeo processado
 @routes.route('/download/<filename>')
 def download_video(filename):
     processed_path = os.path.join(PROCESSED_FOLDER, filename)
